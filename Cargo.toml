@@ -1,0 +1,9 @@
+[package]
+name = "ecat-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+argh = "0.1.13"
+ethercrab = { git = "https://github.com/ethercrab-rs/ethercrab", branch = "master" }
+tokio = { version = "1.43.0", features = ["macros", "rt", "rt-multi-thread"] }
