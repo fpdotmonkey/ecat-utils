@@ -30,19 +30,17 @@ struct Cli {
     #[argh(positional)]
     /// the network interface the EtherCAT bus is connected to
     interface: String,
-    #[argh(switch, short = 'd')]
-    /// show the manufacturer-provided description.  If it contains
-    /// whitespace, it will be displayed as a double-quoted string.
-    description: bool,
-    #[argh(switch, short = 'i')]
-    /// show vendor, product, revision, and serial numbers
-    identity: bool,
     #[argh(switch)]
-    /// show all metadata about the device
-    pre_op: bool,
+    /// show all available metadata for each device
+    meta: bool,
+    #[argh(switch)]
+    /// show information about the PDO lengths; requires that the
+    /// network can enter OP
+    pdo: bool,
     #[argh(switch, short = 'l')]
-    /// show all data about the device, include Rx and Tx PDO lengths
-    op: bool,
+    /// show all available data about the device; requires that the
+    /// network can enter OP
+    long: bool,
 }
 
 #[tokio::main]
@@ -82,26 +80,22 @@ async fn main() -> Result<(), Error> {
         .map(|subdevice| SubdeviceData::new(subdevice.name(), subdevice.configured_address()))
         .collect();
 
-    for (i, subdevice) in group.iter(&maindevice).enumerate() {
-        if cli.description || cli.pre_op || cli.op {
-            let description: String;
-            if let Some(desc) = subdevice.description().await? {
-                description = desc.to_string();
-            } else {
-                description = "".into();
-            }
-            subdevice_datas[i].description = Some(description);
-        }
-        if cli.identity || cli.pre_op || cli.op {
+    if cli.meta || cli.long {
+        for (i, subdevice) in group.iter(&maindevice).enumerate() {
+            subdevice_datas[i].description = Some(
+                subdevice
+                    .description()
+                    .await?
+                    .unwrap_or_default()
+                    .to_string(),
+            );
             subdevice_datas[i].identity = Some(subdevice.identity());
-        }
-        if cli.pre_op || cli.op {
             subdevice_datas[i].alias_address = Some(subdevice.alias_address());
             subdevice_datas[i].propagation_delay = Some(subdevice.propagation_delay());
         }
     }
 
-    if !cli.op {
+    if !(cli.pdo || cli.long) {
         for datum in subdevice_datas {
             println!("{datum}");
         }
