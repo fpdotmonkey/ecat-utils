@@ -6,7 +6,8 @@ use argh::FromArgs;
 use ethercrab::{
     error::Error,
     std::{ethercat_now, tx_rx_task},
-    MainDevice, MainDeviceConfig, PduStorage, SubDeviceIdentity, Timeouts,
+    subdevice_group::{Init, Op},
+    MainDevice, MainDeviceConfig, PduStorage, SubDeviceGroup, SubDeviceIdentity, Timeouts,
 };
 
 /// Maximum number of SubDevices that can be stored. This must be a power of 2 greater than 1.
@@ -36,9 +37,12 @@ struct Cli {
     #[argh(switch, short = 'i')]
     /// show vendor, product, revision, and serial numbers
     identity: bool,
+    #[argh(switch)]
+    /// show all metadata about the device
+    pre_op: bool,
     #[argh(switch, short = 'l')]
-    /// show all available information for each device
-    long: bool,
+    /// show all data about the device, include Rx and Tx PDO lengths
+    op: bool,
 }
 
 #[tokio::main]
@@ -73,50 +77,115 @@ async fn main() -> Result<(), Error> {
         std::process::exit(1);
     };
 
-    let group = group.into_op(&maindevice).await.expect("PRE-OP -> OP");
+    let mut subdevice_datas: Vec<SubdeviceData> = group
+        .iter(&maindevice)
+        .map(|subdevice| SubdeviceData::new(subdevice.name(), subdevice.configured_address()))
+        .collect();
 
-    for subdevice in group.iter(&maindevice) {
-        print!(
-            "{:#06x} {}",
-            subdevice.configured_address(),
-            subdevice.name()
-        );
-        if cli.description || cli.long {
-            if let Some(description) = subdevice.description().await? {
-                print!(" description:{}", escape(&description));
+    for (i, subdevice) in group.iter(&maindevice).enumerate() {
+        if cli.description || cli.pre_op || cli.op {
+            let description: String;
+            if let Some(desc) = subdevice.description().await? {
+                description = desc.to_string();
             } else {
-                print!(" description:\"\"");
+                description = "".into();
             }
+            subdevice_datas[i].description = Some(description);
         }
-        if cli.identity || cli.long {
-            print!(" {}", fmt_identity(subdevice.identity()));
+        if cli.identity || cli.pre_op || cli.op {
+            subdevice_datas[i].identity = Some(subdevice.identity());
         }
-        if cli.long {
-            let io = subdevice.io_raw();
-            print!(
-                " alias:{:#06x} delay:{}ns in:{}B out:{}B",
-                subdevice.alias_address(),
-                subdevice.propagation_delay(),
-                io.inputs().len(),
-                io.inputs().len()
-            );
+        if cli.pre_op || cli.op {
+            subdevice_datas[i].alias_address = Some(subdevice.alias_address());
+            subdevice_datas[i].propagation_delay = Some(subdevice.propagation_delay());
         }
-        println!();
     }
 
-    let group = group
-        .into_safe_op(&maindevice)
-        .await
-        .expect("OP -> SAFE-OP");
+    if !cli.op {
+        for datum in subdevice_datas {
+            println!("{datum}");
+        }
+        group.into_init(&maindevice).await?;
+        return Ok(());
+    }
 
-    let group = group
-        .into_pre_op(&maindevice)
-        .await
-        .expect("SAFE-OP -> PRE-OP");
+    let group = group.into_op(&maindevice).await?;
 
-    let _group = group.into_init(&maindevice).await.expect("PRE-OP -> INIT");
+    for (i, subdevice) in group.iter(&maindevice).enumerate() {
+        let io = subdevice.io_raw();
+        subdevice_datas[i].input_len = Some(io.inputs().len());
+        subdevice_datas[i].output_len = Some(io.outputs().len());
+    }
+
+    for datum in subdevice_datas {
+        println!("{datum}");
+    }
+
+    let _group = close_ethercat(group, maindevice).await?;
 
     Ok(())
+}
+
+async fn close_ethercat(
+    group: SubDeviceGroup<{ MAX_SUBDEVICES }, { PDI_LEN }, Op>,
+    maindevice: Arc<MainDevice<'_>>,
+) -> Result<SubDeviceGroup<{ MAX_SUBDEVICES }, { PDI_LEN }, Init>, Error> {
+    let group = group.into_safe_op(&maindevice).await?;
+
+    let group = group.into_pre_op(&maindevice).await?;
+
+    group.into_init(&maindevice).await
+}
+
+struct SubdeviceData {
+    name: String,
+    address: u16,
+    description: Option<String>,
+    identity: Option<SubDeviceIdentity>,
+    alias_address: Option<u16>,
+    propagation_delay: Option<u32>,
+    input_len: Option<usize>,
+    output_len: Option<usize>,
+}
+
+impl std::fmt::Display for SubdeviceData {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:#06x} {}", self.address, self.name)?;
+        if let Some(description) = &self.description {
+            write!(f, " description:{}", escape(description))?;
+        }
+        if let Some(identity) = self.identity {
+            write!(f, " {}", fmt_identity(identity))?;
+        }
+        if let Some(alias_address) = self.alias_address {
+            write!(f, " alias:{:#06x}", alias_address)?;
+        }
+        if let Some(delay) = self.propagation_delay {
+            write!(f, " delay:{}ns", delay)?;
+        }
+        if let Some(i) = self.input_len {
+            write!(f, " in:{}B", i)?;
+        }
+        if let Some(o) = self.output_len {
+            write!(f, " out:{}B", o)?;
+        }
+        Ok(())
+    }
+}
+
+impl SubdeviceData {
+    fn new(name: &str, address: u16) -> Self {
+        Self {
+            name: name.into(),
+            address,
+            description: None,
+            identity: None,
+            alias_address: None,
+            propagation_delay: None,
+            input_len: None,
+            output_len: None,
+        }
+    }
 }
 
 fn escape(s: &str) -> String {

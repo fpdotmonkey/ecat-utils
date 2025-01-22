@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 argh = "0.1.13"
-ethercrab = { git = "https://github.com/ethercrab-rs/ethercrab", branch = "master" }
+ethercrab = { git = "https://github.com/fpdotmonkey/ethercrab", branch = "longer-descriptions" }
 tokio = { version = "1.43.0", features = ["macros", "rt", "rt-multi-thread"] }
