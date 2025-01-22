@@ -16,7 +16,7 @@ const MAX_PDU_DATA: usize = PduStorage::element_size(1100);
 /// Maximum number of EtherCAT frames that can be in flight at any one time.
 const MAX_FRAMES: usize = 16;
 /// Maximum total PDI length.
-const PDI_LEN: usize = 64;
+const PDI_LEN: usize = 2048;
 
 static PDU_STORAGE: PduStorage<MAX_FRAMES, MAX_PDU_DATA> = PduStorage::new();
 
